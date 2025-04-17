@@ -3,65 +3,22 @@ const router = express.Router();
 const { Pool } = require('pg');
 
 const pool = new Pool({
-    user: process.env.POSTGRES_USER || 'dashboard_user',
-    host: process.env.POSTGRES_HOST || 'postgres',
-    database: process.env.POSTGRES_DB || 'dashboard_db',
-    password: process.env.POSTGRES_PASSWORD || 'dashboard_password',
-    port: 5432,
-  });
+  user: process.env.POSTGRES_USER || 'dashboard_user',
+  host: process.env.POSTGRES_HOST || 'postgres',
+  database: process.env.POSTGRES_DB || 'dashboard_db',
+  password: process.env.POSTGRES_PASSWORD || 'dashboard_password',
+  port: 5432,
+});
+
+// 獲取所有設備列表
 router.get('/', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM geofences ORDER BY created_at DESC');
-    res.json(result.rows);
+    const result = await pool.query('SELECT device_id FROM devices ORDER BY created_at DESC');
+    const devices = result.rows.map((row) => row.device_id);
+    res.json(devices);
   } catch (error) {
-    console.error('Error fetching geofences:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/', async (req, res) => {
-  const { name, description, color, coordinates } = req.body;
-  try {
-    const result = await pool.query(
-      'INSERT INTO geofences (name, description, color, coordinates) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, description, color, JSON.stringify(coordinates)]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating geofence:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.put('/:id', async (req, res) => {
-  const { id } = req.params;
-  const { name, description, color, coordinates } = req.body;
-  try {
-    const result = await pool.query(
-      'UPDATE geofences SET name = $1, description = $2, color = $3, coordinates = $4 WHERE id = $5 RETURNING *',
-      [name, description, color, JSON.stringify(coordinates), id]
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Geofence not found' });
-    }
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating geofence:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.delete('/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query('DELETE FROM geofences WHERE id = $1', [id]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Geofence not found' });
-    }
-    res.status(204).send();
-  } catch (error) {
-    console.error('Error deleting geofence:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error fetching devices from database:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to fetch devices', details: error.message });
   }
 });
 

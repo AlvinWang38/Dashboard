@@ -1,7 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { InfluxDB } = require('@influxdata/influxdb-client');
+const NodeCache = require('node-cache'); // 引入 node-cache
 require('dotenv').config();
+
+// 初始化快取，設置 TTL 為 30 秒
+const cache = new NodeCache({ stdTTL: 30, checkperiod: 10 });
 
 // InfluxDB 配置
 const token = process.env.INFLUXDB_TOKEN || 'my-token';
@@ -11,25 +15,40 @@ const client = new InfluxDB({ url: process.env.INFLUXDB_URL || 'http://influxdb:
 
 router.get('/', (req, res) => {
   const queryApi = client.getQueryApi(org);
+  
+  // 根據查詢參數生成快取鍵
+  const cacheKey = req.query.from && req.query.to 
+    ? `messages_${req.query.from}_${req.query.to}`
+    : `messages_${req.query.range || '1h'}`;
+  
+  // 檢查快取中是否有數據
+  const cachedData = cache.get(cacheKey);
+  if (cachedData) {
+    console.log('Returning cached data for:', cacheKey);
+    return res.json(cachedData);
+  }
+
   let query;
 
   // 檢查是否有 from 和 to 參數（自訂時間範圍）
   if (req.query.from && req.query.to) {
-    const from = req.query.from; // 例如 "2025-04-15T00:00:00Z"
-    const to = req.query.to;     // 例如 "2025-04-15T01:00:00Z"
+    const from = req.query.from;
+    const to = req.query.to;
     query = `from(bucket: "${bucket}")
       |> range(start: ${from}, stop: ${to})
       |> filter(fn: (r) => r._measurement == "device_messages")
       |> filter(fn: (r) => r._field != "message")
-      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")`;
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> limit(n: 1000)`; // 限制返回數據量
   } else {
     // 預設使用 range 參數（相對時間範圍）
-    const range = req.query.range || '1h'; // 預設 1 小時
+    const range = req.query.range || '1h';
     query = `from(bucket: "${bucket}")
       |> range(start: -${range})
       |> filter(fn: (r) => r._measurement == "device_messages")
       |> filter(fn: (r) => r._field != "message")
-      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")`;
+      |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> limit(n: 1000)`; // 限制返回數據量
   }
 
   const results = { data: [], notify: [] };
@@ -95,6 +114,8 @@ router.get('/', (req, res) => {
     },
     complete() {
       console.log('Query complete:', results);
+      // 將查詢結果存入快取
+      cache.set(cacheKey, results);
       res.json(results);
     },
   });

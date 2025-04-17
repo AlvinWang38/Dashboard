@@ -3,6 +3,8 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
 const { InfluxDB, Point } = require('@influxdata/influxdb-client');
+const http = require('http');
+const { Server } = require('socket.io');
 require('dotenv').config();
 
 const messagesRouter = require('./routes/messages');
@@ -11,6 +13,14 @@ const devicesRouter = require('./routes/devices');
 const geofencesRouter = require('./routes/geofences');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+});
+
 const port = process.env.PORT || 3000;
 
 // 調整 CORS 配置，允許所有來源
@@ -242,7 +252,11 @@ mqttClient.on('close', () => {
   mqttConnected = false;
 });
 
-mqttClient.on('message', (topic, message) => {
+const pointsBuffer = [];
+const BATCH_SIZE = 100;
+const FLUSH_INTERVAL = 10000;
+
+mqttClient.on('message', async (topic, message) => {
   const messageStr = message.toString();
   console.log(`Received message on ${topic}: ${messageStr}`);
 
@@ -255,6 +269,21 @@ mqttClient.on('message', (topic, message) => {
   } catch (e) {
     console.error('JSON parse error:', e);
     return;
+  }
+
+  // 自動將新設備插入到 devices 表
+  try {
+    const result = await pool.query(
+      'INSERT INTO devices (device_id, created_at) VALUES ($1, CURRENT_TIMESTAMP) ON CONFLICT (device_id) DO NOTHING RETURNING *',
+      [deviceId]
+    );
+    if (result.rows.length > 0) {
+      console.log(`New device ${deviceId} added to devices table`);
+      // 通知所有前端客戶端
+      io.emit('newDevice', deviceId);
+    }
+  } catch (error) {
+    console.error(`Error inserting device ${deviceId} into devices table:`, error.message, error.stack);
   }
 
   if (type === 'data') {
@@ -279,7 +308,7 @@ mqttClient.on('message', (topic, message) => {
           .intField('tiltz', data.tiltz)
           .floatField('corev', data.corev)
           .floatField('liionv', data.liionv);
-        writeApi.writePoint(point);
+        pointsBuffer.push(point);
       });
     }
   } else if (type === 'notify' && j.notify === 'eng') {
@@ -319,14 +348,28 @@ mqttClient.on('message', (topic, message) => {
       if (decoded.crsp !== undefined) {
         point.intField('crsp', decoded.crsp).intField('crsq', decoded.crsq);
       }
-      writeApi.writePoint(point);
+      pointsBuffer.push(point);
     }
   }
 
-  writeApi.flush().then(() => {
-    console.log(`Data written to InfluxDB for ${topic}`);
-  }).catch((err) => console.error('InfluxDB write error:', err));
+  if (pointsBuffer.length >= BATCH_SIZE) {
+    writeApi.writePoints(pointsBuffer);
+    writeApi.flush().then(() => {
+      console.log(`Batch written to InfluxDB: ${pointsBuffer.length} points`);
+      pointsBuffer.length = 0;
+    }).catch((err) => console.error('InfluxDB batch write error:', err));
+  }
 });
+
+setInterval(() => {
+  if (pointsBuffer.length > 0) {
+    writeApi.writePoints(pointsBuffer);
+    writeApi.flush().then(() => {
+      console.log(`Periodic flush to InfluxDB: ${pointsBuffer.length} points`);
+      pointsBuffer.length = 0;
+    }).catch((err) => console.error('InfluxDB periodic flush error:', err));
+  }
+}, FLUSH_INTERVAL);
 
 // 路由
 app.use('/messages', messagesRouter);
@@ -344,7 +387,7 @@ app.get('/mqtt-status', (req, res) => {
   res.json({ connected: mqttConnected });
 });
 
-// 獲取設備設定
+// 獲取設備設定（已存在，直接使用 device_settings 表）
 app.get('/devices/:deviceId/settings', async (req, res) => {
   const { deviceId } = req.params;
   try {
@@ -366,7 +409,7 @@ app.get('/devices/:deviceId/settings', async (req, res) => {
   }
 });
 
-// 儲存設備設定
+// 儲存設備設定（已存在，直接使用 device_settings 表）
 app.post('/devices/:deviceId/settings', async (req, res) => {
   const { deviceId } = req.params;
   const { group, containerId, tractorId, geofence, labelColor } = req.body;
@@ -393,6 +436,7 @@ app.post('/devices/:deviceId/settings', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
+// 使用 server.listen 代替 app.listen
+server.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
