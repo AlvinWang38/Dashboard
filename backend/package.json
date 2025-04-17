@@ -1,0 +1,17 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "cors": "^2.8.5",
+    "pg": "^8.7.3",
+    "influx": "^5.9.3",
+    "@influxdata/influxdb-client": "^1.33.2",
+    "dotenv": "^16.0.3",
+    "mqtt": "^4.3.7"
+  }
+}

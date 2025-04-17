@@ -1,0 +1,56 @@
+version: '3'
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8087:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=myorg
+      - DOCKER_INFLUXDB_INIT_BUCKET=products
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-token
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dashboard_user
+      POSTGRES_PASSWORD: dashboard_password
+      POSTGRES_DB: dashboard_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    ports:
+      - "4000:3000"
+    depends_on:
+      - influxdb
+      - postgres
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  frontend:
+    build: ./client
+    ports:
+      - "3001:3000"
+    environment:
+      - WDS_SOCKET_PORT=3001
+      # 設置後端 URL 環境變數，替換 <DOCKER_HOST_IP> 為實際的 Docker 主機 IP
+      - REACT_APP_BACKEND_URL=http://172.22.139.217:4000
+    depends_on:
+      - backend
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+
+volumes:
+  influxdb-data:
+  postgres_data:
