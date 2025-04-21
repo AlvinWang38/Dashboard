@@ -63,7 +63,7 @@ const Dashboard = () => {
   const [zoomToDevice, setZoomToDevice] = useState(null); // 用於觸發地圖縮放的設備 ID
   const [isSingleDeviceZoom, setIsSingleDeviceZoom] = useState(false); // 控制是否為單設備縮放模式
 
-  const fetchTrackerData = useCallback(async (newTimeRange) => {
+  const fetchTrackerData = useCallback(async (newTimeRange, groupFilter) => {
     setLoading(true);
     try {
       let url = `${BASE_URL}/messages`;
@@ -108,7 +108,7 @@ const Dashboard = () => {
             const settings = response.data;
             return {
               deviceId,
-              group: settings.group_name || 'default',
+              group: settings.group_name?.trim() || 'default',
               labelColor: settings.label_color || '#000000',
               geofenceId: settings.geofence_id || null,
             };
@@ -134,19 +134,31 @@ const Dashboard = () => {
         return acc;
       }, {});
 
-      const filteredDeviceIds = selectedGroup === 'All Groups'
+      console.log('Device settings map:', deviceSettingsMap);
+
+      const filteredDeviceIds = groupFilter === 'All Groups'
         ? allUniqueDeviceIds
-        : allUniqueDeviceIds.filter((deviceId) => deviceSettingsMap[deviceId].group === selectedGroup);
+        : allUniqueDeviceIds.filter((deviceId) => {
+            const deviceGroup = deviceSettingsMap[deviceId]?.group || 'default';
+            const match = deviceGroup === groupFilter;
+            console.log(`Filtering device ${deviceId}: group=${deviceGroup}, selectedGroup=${groupFilter}, match=${match}`);
+            return match;
+          });
+
+      console.log('Filtered device IDs:', filteredDeviceIds);
 
       const filteredGroupedData = Object.fromEntries(
         Object.entries(groupedData).filter(([deviceId]) => filteredDeviceIds.includes(deviceId))
       );
 
-      const filteredTrackerData = selectedDevices.length > 0
+      // 當選擇群組時，自動將 filteredDeviceIds 設為 selectedDevices，確保地圖只顯示這些設備
+      setSelectedDevices(filteredDeviceIds);
+
+      const filteredTrackerData = filteredDeviceIds.length > 0
         ? Object.fromEntries(
-            Object.entries(filteredGroupedData).filter(([deviceId]) => selectedDevices.includes(deviceId))
+            Object.entries(filteredGroupedData).filter(([deviceId]) => filteredDeviceIds.includes(deviceId))
           )
-        : filteredGroupedData;
+        : {};
 
       setTrackerData(filteredTrackerData);
 
@@ -215,13 +227,13 @@ const Dashboard = () => {
       console.error('Failed to fetch tracker data:', error);
       setLoading(false);
     }
-  }, [selectedGroup]);
+  }, []);
 
   const handleTimeRangeChange = (newTimeRange) => {
     setTimeRange(newTimeRange);
     setLoading(true);
     setIsSingleDeviceZoom(false); // 改變時間範圍時重置單設備縮放模式
-    fetchTrackerData(newTimeRange);
+    fetchTrackerData(newTimeRange, selectedGroup);
   };
 
   useEffect(() => {
@@ -229,12 +241,13 @@ const Dashboard = () => {
       setLoading(true);
       try {
         const groupsRes = await axios.get(`${BASE_URL}/groups`);
-        setGroups(groupsRes.data);
+        const normalizedGroups = groupsRes.data;
+        setGroups(normalizedGroups);
 
         const geofencesRes = await axios.get(`${BASE_URL}/geofences`);
         setGeofences(geofencesRes.data);
 
-        fetchTrackerData({ type: 'relative', value: '1h' });
+        fetchTrackerData({ type: 'relative', value: '1h' }, 'All Groups');
       } catch (error) {
         console.error('Failed to fetch initial data:', error);
       } finally {
@@ -247,7 +260,7 @@ const Dashboard = () => {
     let interval;
     if (refreshInterval > 0) {
       interval = setInterval(() => {
-        fetchTrackerData(timeRange);
+        fetchTrackerData(timeRange, selectedGroup);
       }, refreshInterval);
     }
 
@@ -281,11 +294,12 @@ const Dashboard = () => {
   };
 
   const handleGroupChange = (e) => {
-    setSelectedGroup(e.target.value);
-    setSelectedDevices([]);
+    const newGroup = e.target.value;
+    setSelectedGroup(newGroup);
+    setSelectedDevices([]); // 清空選擇的設備
     setLoading(true);
     setIsSingleDeviceZoom(false); // 改變群組時重置單設備縮放模式
-    fetchTrackerData(timeRange);
+    fetchTrackerData(timeRange, newGroup); // 傳入最新的群組值
   };
 
   const containerStyle = {
