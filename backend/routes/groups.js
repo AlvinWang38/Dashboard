@@ -13,7 +13,11 @@ const pool = new Pool({
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT group_name FROM groups');
-    const groups = result.rows.map(row => row.group_name);
+    let groups = result.rows.map(row => row.group_name);
+    // 確保 default 群組始終存在
+    if (!groups.includes('default')) {
+      groups = ['default', ...groups];
+    }
     res.json(groups);
   } catch (error) {
     console.error('Error fetching groups:', error.message, error.stack);

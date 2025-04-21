@@ -1,11 +1,13 @@
 import { useMap } from 'react-leaflet';
 import { useEffect, useRef } from 'react';
 
-const MapZoomHandler = ({ trackerData, selectedDevices }) => {
+const MapZoomHandler = ({ trackerData, selectedDevices, isSingleDeviceZoom }) => {
   const map = useMap();
   const prevBoundsRef = useRef(null); // 用來記錄上一次的 bounds
 
   useEffect(() => {
+    if (isSingleDeviceZoom) return; // 如果是單設備縮放模式，跳過自動縮放
+
     if (Object.keys(trackerData).length === 0) return;
 
     const bounds = [];
@@ -23,7 +25,7 @@ const MapZoomHandler = ({ trackerData, selectedDevices }) => {
         prevBoundsRef.current = boundsString; // 更新記錄的 bounds
       }
     }
-  }, [map, trackerData, selectedDevices]);
+  }, [map, trackerData, selectedDevices, isSingleDeviceZoom]);
 
   return null;
 };

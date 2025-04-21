@@ -46,6 +46,10 @@ const DeviceManagement = () => {
     tractorId: '',
     geofenceId: null,
     labelColor: '#000000',
+    customName: '',
+    licensePlate: '',
+    driver: '',
+    phone: '',
   });
   const navigate = useNavigate();
 
@@ -96,6 +100,10 @@ const DeviceManagement = () => {
                 tractorId: settings.tractor_id || '',
                 geofenceId: settings.geofence_id || null,
                 labelColor: settings.label_color || '#000000',
+                customName: settings.custom_name || '',
+                licensePlate: settings.license_plate || '',
+                driver: settings.driver || '',
+                phone: settings.phone || '',
               };
             } catch (error) {
               console.error(`Error fetching settings for device ${device.deviceId}:`, error);
@@ -106,6 +114,10 @@ const DeviceManagement = () => {
                 tractorId: '',
                 geofenceId: null,
                 labelColor: '#000000',
+                customName: '',
+                licensePlate: '',
+                driver: '',
+                phone: '',
               };
             }
           })
@@ -144,6 +156,10 @@ const DeviceManagement = () => {
         tractorId: settings.tractor_id || '',
         geofenceId: settings.geofence_id || null,
         labelColor: settings.label_color || '#000000',
+        customName: settings.custom_name || '',
+        licensePlate: settings.license_plate || '',
+        driver: settings.driver || '',
+        phone: settings.phone || '',
       });
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -153,6 +169,10 @@ const DeviceManagement = () => {
         tractorId: '',
         geofenceId: null,
         labelColor: '#000000',
+        customName: '',
+        licensePlate: '',
+        driver: '',
+        phone: '',
       });
     }
     setIsPopupOpen(true);
@@ -173,7 +193,9 @@ const DeviceManagement = () => {
     if (newGroup.trim() && !groups.includes(newGroup.trim())) {
       try {
         await axios.post(`${BASE_URL}/groups`, { groupName: newGroup.trim() });
-        setGroups((prev) => [...prev, newGroup.trim()]);
+        // 重新從後端獲取群組列表，確保包含 default 和所有群組
+        const groupsRes = await axios.get(`${BASE_URL}/groups`);
+        setGroups(groupsRes.data || ['default']);
         setFormData((prev) => ({ ...prev, group: newGroup.trim() }));
         setNewGroup('');
       } catch (error) {
@@ -190,6 +212,10 @@ const DeviceManagement = () => {
         tractorId: formData.tractorId,
         geofenceId: formData.geofenceId === 'None' ? null : parseInt(formData.geofenceId),
         labelColor: formData.labelColor,
+        customName: formData.customName,
+        licensePlate: formData.licensePlate,
+        driver: formData.driver,
+        phone: formData.phone,
       });
       console.log('Settings saved:', response.data);
 
@@ -203,6 +229,10 @@ const DeviceManagement = () => {
                 tractorId: formData.tractorId,
                 geofenceId: formData.geofenceId === 'None' ? null : parseInt(formData.geofenceId),
                 labelColor: formData.labelColor,
+                customName: formData.customName,
+                licensePlate: formData.licensePlate,
+                driver: formData.driver,
+                phone: formData.phone,
               }
             : device
         )
@@ -352,11 +382,15 @@ const DeviceManagement = () => {
           <thead>
             <tr>
               <th style={thStyle}>Icon</th>
+              <th style={thStyle}>Custom Name</th>
               <th style={thStyle}>Device ID</th>
               <th style={thStyle}>Last Seen Time</th>
               <th style={thStyle}>Group</th>
               <th style={thStyle}>Container ID</th>
               <th style={thStyle}>Tractor ID</th>
+              <th style={thStyle}>License Plate</th>
+              <th style={thStyle}>Driver</th>
+              <th style={thStyle}>Phone</th>
               <th style={thStyle}>Geofence</th>
               <th style={thStyle}>Settings</th>
             </tr>
@@ -371,6 +405,7 @@ const DeviceManagement = () => {
                     style={{ width: '15px', height: '25px' }}
                   />
                 </td>
+                <td style={thTdStyle}>{device.customName}</td>
                 <td style={thTdStyle}>
                   <span
                     style={deviceIdStyle}
@@ -383,6 +418,9 @@ const DeviceManagement = () => {
                 <td style={thTdStyle}>{device.group}</td>
                 <td style={thTdStyle}>{device.containerId}</td>
                 <td style={thTdStyle}>{device.tractorId}</td>
+                <td style={thTdStyle}>{device.licensePlate}</td>
+                <td style={thTdStyle}>{device.driver}</td>
+                <td style={thTdStyle}>{device.phone}</td>
                 <td style={thTdStyle}>
                   {device.geofenceId
                     ? geofences.find((g) => g.id === device.geofenceId)?.name || 'Unknown'
@@ -404,6 +442,18 @@ const DeviceManagement = () => {
               ✕
             </button>
             <h3>Settings for Device: {selectedDevice.deviceId}</h3>
+
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Custom Name</label>
+              <input
+                type="text"
+                name="customName"
+                value={formData.customName}
+                onChange={handleInputChange}
+                style={inputStyle}
+                maxLength={30}
+              />
+            </div>
 
             <div style={formGroupStyle}>
               <label style={labelStyle}>Group</label>
@@ -456,6 +506,42 @@ const DeviceManagement = () => {
                 value={formData.tractorId}
                 onChange={handleInputChange}
                 style={inputStyle}
+              />
+            </div>
+
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>License Plate</label>
+              <input
+                type="text"
+                name="licensePlate"
+                value={formData.licensePlate}
+                onChange={handleInputChange}
+                style={inputStyle}
+                maxLength={30}
+              />
+            </div>
+
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Driver</label>
+              <input
+                type="text"
+                name="driver"
+                value={formData.driver}
+                onChange={handleInputChange}
+                style={inputStyle}
+                maxLength={30}
+              />
+            </div>
+
+            <div style={formGroupStyle}>
+              <label style={labelStyle}>Phone</label>
+              <input
+                type="text"
+                name="phone"
+                value={formData.phone}
+                onChange={handleInputChange}
+                style={inputStyle}
+                maxLength={30}
               />
             </div>
 

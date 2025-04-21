@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { format } from 'date-fns';
 import { useState, useEffect, useCallback } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup, Tooltip, LayersControl, Polygon } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, Tooltip, LayersControl, Polygon, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import TimeRangePicker from '../TimeRangePicker';
@@ -19,23 +19,7 @@ const colorMap = {
   '#ffd700': 'gold',
 };
 
-// 使用環境變數設置後端基礎 URL
 const BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:4000';
-
-// 檢查點是否在多邊形內（ray-casting 演算法）
-const isPointInPolygon = (point, polygon) => {
-  const [x, y] = point;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
-    const intersect =
-      ((yi > y) !== (yj > y)) &&
-      (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
-};
 
 const createCustomIcon = (color) => {
   return new L.Icon({
@@ -48,6 +32,23 @@ const createCustomIcon = (color) => {
   });
 };
 
+// 自訂元件，用於處理地圖縮放到特定設備路徑
+const ZoomToDevicePath = ({ deviceId, trackerData }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    if (deviceId && trackerData[deviceId]) {
+      const path = trackerData[deviceId];
+      if (path && path.length > 0) {
+        const bounds = L.latLngBounds(path.map((p) => p.position));
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+    }
+  }, [deviceId, trackerData, map]);
+
+  return null;
+};
+
 const Dashboard = () => {
   const [trackerData, setTrackerData] = useState({});
   const [loading, setLoading] = useState(true);
@@ -57,22 +58,26 @@ const Dashboard = () => {
   const [groups, setGroups] = useState(['default']);
   const [selectedGroup, setSelectedGroup] = useState('All Groups');
   const [geofences, setGeofences] = useState([]);
-  const [devicesInGeofence, setDevicesInGeofence] = useState({});
+  const [timeRange, setTimeRange] = useState({ type: 'relative', value: '1h' });
+  const [fullData, setFullData] = useState({});
+  const [zoomToDevice, setZoomToDevice] = useState(null); // 用於觸發地圖縮放的設備 ID
+  const [isSingleDeviceZoom, setIsSingleDeviceZoom] = useState(false); // 控制是否為單設備縮放模式
 
-  const fetchTrackerData = useCallback(async (timeRange) => {
+  const fetchTrackerData = useCallback(async (newTimeRange) => {
+    setLoading(true);
     try {
       let url = `${BASE_URL}/messages`;
-      if (timeRange.type === 'relative') {
-        url += `?range=${timeRange.value}`;
-      } else if (timeRange.type === 'custom') {
-        url += `?from=${encodeURIComponent(timeRange.from)}&to=${encodeURIComponent(timeRange.to)}`;
+      if (newTimeRange.type === 'relative') {
+        url += `?range=${newTimeRange.value}`;
+      } else if (newTimeRange.type === 'custom') {
+        url += `?from=${encodeURIComponent(newTimeRange.from)}&to=${encodeURIComponent(newTimeRange.to)}`;
       }
 
       const res = await axios.get(url);
       const data = res.data.data;
 
       const allUniqueDeviceIds = [...new Set(data.map((msg) => msg.device_id))];
-      const validData = data.filter((msg) => msg.b !== 255 && msg.lg !== 255);
+      const validData = data.filter((msg) => msg.la !== 255 && msg.lg !== 255);
 
       const groupedData = validData.reduce((acc, msg) => {
         const deviceId = msg.device_id;
@@ -142,9 +147,10 @@ const Dashboard = () => {
             Object.entries(filteredGroupedData).filter(([deviceId]) => selectedDevices.includes(deviceId))
           )
         : filteredGroupedData;
+
       setTrackerData(filteredTrackerData);
 
-      const fullData = data.reduce((acc, msg) => {
+      const newFullData = data.reduce((acc, msg) => {
         const deviceId = msg.device_id;
         if (!acc[deviceId]) {
           acc[deviceId] = [];
@@ -153,44 +159,49 @@ const Dashboard = () => {
           position: [msg.la, msg.lg],
           time: msg.time,
           tmp: msg.tmp,
+          inGeofence: msg.inGeofence,
         });
         return acc;
       }, {});
 
-      Object.keys(fullData).forEach((deviceId) => {
-        fullData[deviceId].sort((a, b) => new Date(a.time) - new Date(b.time));
+      Object.keys(newFullData).forEach((deviceId) => {
+        newFullData[deviceId].sort((a, b) => new Date(a.time) - new Date(b.time));
       });
+      setFullData(newFullData);
 
       const tableEntries = filteredDeviceIds.map((deviceId) => {
-        const path = fullData[deviceId];
-        const lastPoint = path[path.length - 1];
-        const allInvalid = path.every((p) => p.position[0] === 255 && p.position[1] === 255);
+        const path = newFullData[deviceId] || [];
+        const allInvalid = path.length > 0 && path.every((p) => p.position[0] === 255 && p.position[1] === 255);
+
+        let lastValidPoint = null;
+        for (let i = path.length - 1; i >= 0; i--) {
+          if (path[i].position[0] !== 255 && path[i].position[1] !== 255) {
+            lastValidPoint = path[i];
+            break;
+          }
+        }
+
+        const lastPoint = lastValidPoint || {
+          position: [255, 255],
+          time: new Date().toISOString(),
+          tmp: 0,
+          inGeofence: false,
+        };
+
         return {
           deviceId,
-          color: deviceSettingsMap[deviceId].colorName,
-          labelColor: deviceSettingsMap[deviceId].labelColor,
-          group: deviceSettingsMap[deviceId].group,
+          color: deviceSettingsMap[deviceId].colorName || 'red',
+          labelColor: deviceSettingsMap[deviceId].labelColor || '#000000',
+          group: deviceSettingsMap[deviceId].group || 'default',
           geofenceId: deviceSettingsMap[deviceId].geofenceId,
           lastTime: lastPoint.time,
           lat: lastPoint.position[0],
           lon: lastPoint.position[1],
           temp: lastPoint.tmp,
           allInvalid,
+          inGeofence: lastPoint.inGeofence,
         };
       });
-
-      // 檢查設備是否在 Geofence 內
-      const inGeofenceMap = {};
-      tableEntries.forEach((entry) => {
-        if (entry.geofenceId && !entry.allInvalid) {
-          const geofence = geofences.find((g) => g.id === entry.geofenceId);
-          if (geofence) {
-            const isInside = isPointInPolygon([entry.lat, entry.lon], geofence.coordinates);
-            inGeofenceMap[entry.deviceId] = isInside;
-          }
-        }
-      });
-      setDevicesInGeofence(inGeofenceMap);
 
       tableEntries.sort((a, b) => {
         if (a.allInvalid && !b.allInvalid) return 1;
@@ -204,36 +215,44 @@ const Dashboard = () => {
       console.error('Failed to fetch tracker data:', error);
       setLoading(false);
     }
-  }, [selectedDevices, selectedGroup, geofences]);
+  }, [selectedGroup]);
 
-  const handleTimeRangeChange = (timeRange) => {
+  const handleTimeRangeChange = (newTimeRange) => {
+    setTimeRange(newTimeRange);
     setLoading(true);
-    fetchTrackerData(timeRange);
+    setIsSingleDeviceZoom(false); // 改變時間範圍時重置單設備縮放模式
+    fetchTrackerData(newTimeRange);
   };
 
   useEffect(() => {
-    const fetchGroupsAndGeofences = async () => {
+    const fetchInitialData = async () => {
+      setLoading(true);
       try {
         const groupsRes = await axios.get(`${BASE_URL}/groups`);
         setGroups(groupsRes.data);
 
         const geofencesRes = await axios.get(`${BASE_URL}/geofences`);
         setGeofences(geofencesRes.data);
+
+        fetchTrackerData({ type: 'relative', value: '1h' });
       } catch (error) {
-        console.error('Failed to fetch groups or geofences:', error);
+        console.error('Failed to fetch initial data:', error);
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchGroupsAndGeofences();
-    fetchTrackerData({ type: 'relative', value: '1h' });
+    fetchInitialData();
 
+    let interval;
     if (refreshInterval > 0) {
-      const interval = setInterval(() => {
-        fetchTrackerData({ type: 'relative', value: '1h' });
+      interval = setInterval(() => {
+        fetchTrackerData(timeRange);
       }, refreshInterval);
-      return () => clearInterval(interval);
     }
-  }, [fetchTrackerData, refreshInterval]);
+
+    return () => clearInterval(interval);
+  }, [refreshInterval, timeRange]);
 
   const handleDeviceToggle = (deviceId) => {
     setSelectedDevices((prev) =>
@@ -241,6 +260,20 @@ const Dashboard = () => {
         ? prev.filter((id) => id !== deviceId)
         : [...prev, deviceId]
     );
+    setIsSingleDeviceZoom(false); // 手動勾選時退出單設備縮放模式
+  };
+
+  const handleDeviceIdClick = (deviceId, allInvalid) => {
+    if (allInvalid) return; // 如果設備只有無效資料，則不觸發
+
+    // 自動勾選設備
+    if (!selectedDevices.includes(deviceId)) {
+      handleDeviceToggle(deviceId);
+    }
+
+    // 觸發地圖縮放到該設備路徑
+    setZoomToDevice(deviceId);
+    setIsSingleDeviceZoom(true); // 進入單設備縮放模式
   };
 
   const handleRefreshChange = (e) => {
@@ -250,6 +283,9 @@ const Dashboard = () => {
   const handleGroupChange = (e) => {
     setSelectedGroup(e.target.value);
     setSelectedDevices([]);
+    setLoading(true);
+    setIsSingleDeviceZoom(false); // 改變群組時重置單設備縮放模式
+    fetchTrackerData(timeRange);
   };
 
   const containerStyle = {
@@ -314,9 +350,14 @@ const Dashboard = () => {
     fontSize: '14px',
   };
 
-  const deviceIdStyle = (deviceId) => ({
-    color: devicesInGeofence[deviceId] ? '#ff0000' : '#007bff',
-    textDecoration: 'underline',
+  const deviceIdStyle = (deviceId, allInvalid) => ({
+    cursor: allInvalid ? 'not-allowed' : 'pointer',
+    color: allInvalid ? '#aaa' : '#007bff',
+    textDecoration: allInvalid ? 'none' : 'underline',
+  });
+
+  const rowStyle = (inGeofence) => ({
+    backgroundColor: inGeofence ? 'rgba(255, 0, 0, 0.6)' : 'transparent',
   });
 
   const defaultCenter = [25.0330, 121.5654];
@@ -358,7 +399,12 @@ const Dashboard = () => {
                 />
               </BaseLayer>
             </LayersControl>
-            <MapZoomHandler trackerData={trackerData} selectedDevices={selectedDevices} />
+            <MapZoomHandler
+              trackerData={trackerData}
+              selectedDevices={selectedDevices}
+              isSingleDeviceZoom={isSingleDeviceZoom}
+            />
+            <ZoomToDevicePath deviceId={zoomToDevice} trackerData={trackerData} />
             {Object.entries(trackerData).map(([deviceId, path]) => {
               const lastPoint = path[path.length - 1];
               const color = tableData.find((entry) => entry.deviceId === deviceId)?.color || 'red';
@@ -440,14 +486,18 @@ const Dashboard = () => {
           </thead>
           <tbody>
             {tableData.map((entry) => (
-              <tr key={entry.deviceId}>
+              <tr key={entry.deviceId} style={rowStyle(entry.inGeofence)}>
                 <td style={thTdStyle}>
                   <input
                     type="checkbox"
                     checked={selectedDevices.includes(entry.deviceId)}
                     onChange={() => handleDeviceToggle(entry.deviceId)}
-                    disabled={entry.allInvalid}
-                    style={entry.allInvalid ? { cursor: 'not-allowed' } : {}}
+                    disabled={entry.allInvalid && fullData[entry.deviceId]?.every((p) => p.position[0] === 255 && p.position[1] === 255)}
+                    style={
+                      entry.allInvalid && fullData[entry.deviceId]?.every((p) => p.position[0] === 255 && p.position[1] === 255)
+                        ? { cursor: 'not-allowed' }
+                        : {}
+                    }
                   />
                 </td>
                 <td style={thTdStyle}>
@@ -458,7 +508,12 @@ const Dashboard = () => {
                   />
                 </td>
                 <td style={thTdStyle}>
-                  <span style={deviceIdStyle(entry.deviceId)}>{entry.deviceId}</span>
+                  <span
+                    style={deviceIdStyle(entry.deviceId, entry.allInvalid)}
+                    onClick={() => handleDeviceIdClick(entry.deviceId, entry.allInvalid)}
+                  >
+                    {entry.deviceId}
+                  </span>
                 </td>
                 <td style={thTdStyle}>{format(new Date(entry.lastTime), 'yyyy/MM/dd HH:mm:ss')}</td>
                 <td style={thTdStyle}>{entry.lat.toFixed(4)}</td>
