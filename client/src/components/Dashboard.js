@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { format } from 'date-fns';
-import { useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, Tooltip, LayersControl, Polygon, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -62,6 +62,7 @@ const Dashboard = () => {
   const [fullData, setFullData] = useState({});
   const [zoomToDevice, setZoomToDevice] = useState(null); // 用於觸發地圖縮放的設備 ID
   const [isSingleDeviceZoom, setIsSingleDeviceZoom] = useState(false); // 控制是否為單設備縮放模式
+  const [expandedRows, setExpandedRows] = useState({}); // 記錄展開狀態
 
   const fetchTrackerData = useCallback(async (newTimeRange, groupFilter) => {
     setLoading(true);
@@ -111,6 +112,9 @@ const Dashboard = () => {
               group: settings.group_name?.trim() || 'default',
               labelColor: settings.label_color || '#000000',
               geofenceId: settings.geofence_id || null,
+              customName: settings.custom_name || '',
+              containerId: settings.container_id || '',
+              driver: settings.driver || '',
             };
           } catch (error) {
             console.error(`Error fetching settings for device ${deviceId}:`, error);
@@ -119,6 +123,9 @@ const Dashboard = () => {
               group: 'default',
               labelColor: '#000000',
               geofenceId: null,
+              customName: '',
+              containerId: '',
+              driver: '',
             };
           }
         })
@@ -130,6 +137,9 @@ const Dashboard = () => {
           labelColor: device.labelColor,
           colorName: colorMap[device.labelColor] || 'black',
           geofenceId: device.geofenceId,
+          customName: device.customName,
+          containerId: device.containerId,
+          driver: device.driver,
         };
         return acc;
       }, {});
@@ -200,16 +210,24 @@ const Dashboard = () => {
           inGeofence: false,
         };
 
+        // 從 trackerData 獲取進階資料（corev, liionv）
+        const trackerPoint = filteredTrackerData[deviceId]?.[filteredTrackerData[deviceId].length - 1] || {};
+
         return {
           deviceId,
           color: deviceSettingsMap[deviceId].colorName || 'red',
           labelColor: deviceSettingsMap[deviceId].labelColor || '#000000',
           group: deviceSettingsMap[deviceId].group || 'default',
           geofenceId: deviceSettingsMap[deviceId].geofenceId,
+          customName: deviceSettingsMap[deviceId].customName,
+          containerId: deviceSettingsMap[deviceId].containerId,
+          driver: deviceSettingsMap[deviceId].driver,
           lastTime: lastPoint.time,
           lat: lastPoint.position[0],
           lon: lastPoint.position[1],
           temp: lastPoint.tmp,
+          corev: trackerPoint.corev || 0,
+          liionv: trackerPoint.liionv || 0,
           allInvalid,
           inGeofence: lastPoint.inGeofence,
         };
@@ -302,6 +320,13 @@ const Dashboard = () => {
     fetchTrackerData(timeRange, newGroup); // 傳入最新的群組值
   };
 
+  const toggleRow = (deviceId) => {
+    setExpandedRows((prev) => ({
+      ...prev,
+      [deviceId]: !prev[deviceId],
+    }));
+  };
+
   const containerStyle = {
     marginLeft: '220px',
     padding: '20px',
@@ -374,6 +399,11 @@ const Dashboard = () => {
     backgroundColor: inGeofence ? 'rgba(255, 0, 0, 0.6)' : 'transparent',
   });
 
+  const expandedRowStyle = {
+    backgroundColor: '#f9f9f9',
+    padding: '10px',
+  };
+
   const defaultCenter = [25.0330, 121.5654];
 
   const { BaseLayer } = LayersControl;
@@ -419,38 +449,39 @@ const Dashboard = () => {
               isSingleDeviceZoom={isSingleDeviceZoom}
             />
             <ZoomToDevicePath deviceId={zoomToDevice} trackerData={trackerData} />
-            {Object.entries(trackerData).map(([deviceId, path]) => {
-              const lastPoint = path[path.length - 1];
-              const color = tableData.find((entry) => entry.deviceId === deviceId)?.color || 'red';
-              return (
-                <div key={deviceId}>
-                  <Polyline
-                    positions={path.map((p) => p.position)}
-                    color={color}
-                    weight={3}
-                  />
-                  <Marker position={lastPoint.position} icon={createCustomIcon(color)}>
-                    <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
-                      Device ID: {deviceId}<br />
-                      Lat: {lastPoint.position[0]}<br />
-                      Lon: {lastPoint.position[1]}
-                    </Tooltip>
-                    <Popup>
-                      <b>Device ID:</b> {deviceId}<br />
-                      <b>Time:</b> {format(new Date(lastPoint.time), 'yyyy/MM/dd HH:mm:ss')}<br />
-                      <b>Latitude:</b> {lastPoint.position[0]}<br />
-                      <b>Longitude:</b> {lastPoint.position[1]}<br />
-                      <b>Temperature:</b> {lastPoint.tmp}°C<br />
-                      <b>Tilt X:</b> {lastPoint.tiltx}<br />
-                      <b>Tilt Y:</b> {lastPoint.tilty}<br />
-                      <b>Tilt Z:</b> {lastPoint.tiltz}<br />
-                      <b>Core Voltage:</b> {lastPoint.corev}V<br />
-                      <b>Li-ion Voltage:</b> {lastPoint.liionv}V
-                    </Popup>
-                  </Marker>
-                </div>
-              );
-            })}
+            {Object.entries(trackerData).map(([deviceId, path]) => (
+              <Fragment key={deviceId}>
+                <Polyline
+                  key={`polyline-${deviceId}`}
+                  positions={path.map((p) => p.position)}
+                  color={tableData.find((entry) => entry.deviceId === deviceId)?.color || 'red'}
+                  weight={3}
+                />
+                <Marker
+                  key={`marker-${deviceId}`}
+                  position={path[path.length - 1].position}
+                  icon={createCustomIcon(tableData.find((entry) => entry.deviceId === deviceId)?.color || 'red')}
+                >
+                  <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
+                    Device ID: {deviceId}<br />
+                    Lat: {path[path.length - 1].position[0]}<br />
+                    Lon: {path[path.length - 1].position[1]}
+                  </Tooltip>
+                  <Popup>
+                    <b>Device ID:</b> {deviceId}<br />
+                    <b>Time:</b> {format(new Date(path[path.length - 1].time), 'yyyy/MM/dd HH:mm:ss')}<br />
+                    <b>Latitude:</b> {path[path.length - 1].position[0]}<br />
+                    <b>Longitude:</b> {path[path.length - 1].position[1]}<br />
+                    <b>Temperature:</b> {path[path.length - 1].tmp}°C<br />
+                    <b>Tilt X:</b> {path[path.length - 1].tiltx}<br />
+                    <b>Tilt Y:</b> {path[path.length - 1].tilty}<br />
+                    <b>Tilt Z:</b> {path[path.length - 1].tiltz}<br />
+                    <b>Core Voltage:</b> {path[path.length - 1].corev}V<br />
+                    <b>Li-ion Voltage:</b> {path[path.length - 1].liionv}V
+                  </Popup>
+                </Marker>
+              </Fragment>
+            ))}
             {geofences.map((geofence) => (
               <Polygon
                 key={geofence.id}
@@ -488,52 +519,65 @@ const Dashboard = () => {
         </div>
         <table style={tableStyle}>
           <thead>
-            <tr>
-              <th style={thStyle}>View</th>
-              <th style={thStyle}>Icon</th>
-              <th style={thStyle}>Device ID</th>
-              <th style={thStyle}>Last Data Time</th>
-              <th style={thStyle}>Latitude</th>
-              <th style={thStyle}>Longitude</th>
-              <th style={thStyle}>Temperature (°C)</th>
-            </tr>
+            <tr><th style={thStyle}>View</th><th style={thStyle}>Icon</th><th style={thStyle}>Name</th><th style={thStyle}>Container ID</th><th style={thStyle}>Driver</th><th style={thStyle}>Last Seen Time</th><th style={thStyle}></th></tr>
           </thead>
           <tbody>
             {tableData.map((entry) => (
-              <tr key={entry.deviceId} style={rowStyle(entry.inGeofence)}>
-                <td style={thTdStyle}>
-                  <input
-                    type="checkbox"
-                    checked={selectedDevices.includes(entry.deviceId)}
-                    onChange={() => handleDeviceToggle(entry.deviceId)}
-                    disabled={entry.allInvalid && fullData[entry.deviceId]?.every((p) => p.position[0] === 255 && p.position[1] === 255)}
-                    style={
-                      entry.allInvalid && fullData[entry.deviceId]?.every((p) => p.position[0] === 255 && p.position[1] === 255)
-                        ? { cursor: 'not-allowed' }
-                        : {}
-                    }
-                  />
-                </td>
-                <td style={thTdStyle}>
-                  <img
-                    src={`https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-${entry.color}.png`}
-                    alt={`${entry.color} marker`}
-                    style={{ width: '15px', height: '25px' }}
-                  />
-                </td>
-                <td style={thTdStyle}>
-                  <span
-                    style={deviceIdStyle(entry.deviceId, entry.allInvalid)}
-                    onClick={() => handleDeviceIdClick(entry.deviceId, entry.allInvalid)}
-                  >
-                    {entry.deviceId}
-                  </span>
-                </td>
-                <td style={thTdStyle}>{format(new Date(entry.lastTime), 'yyyy/MM/dd HH:mm:ss')}</td>
-                <td style={thTdStyle}>{entry.lat.toFixed(4)}</td>
-                <td style={thTdStyle}>{entry.lon.toFixed(4)}</td>
-                <td style={thTdStyle}>{entry.temp}</td>
-              </tr>
+              <Fragment key={entry.deviceId}>
+                <tr style={rowStyle(entry.inGeofence)}>
+                  <td style={thTdStyle}>
+                    <input
+                      type="checkbox"
+                      checked={selectedDevices.includes(entry.deviceId)}
+                      onChange={() => handleDeviceToggle(entry.deviceId)}
+                      disabled={entry.allInvalid && fullData[entry.deviceId]?.every((p) => p.position[0] === 255 && p.position[1] === 255)}
+                      style={
+                        entry.allInvalid && fullData[entry.deviceId]?.every((p) => p.position[0] === 255 && p.position[1] === 255)
+                          ? { cursor: 'not-allowed' }
+                          : {}
+                      }
+                    />
+                  </td>
+                  <td style={thTdStyle}>
+                    <img
+                      src={`https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-${entry.color}.png`}
+                      alt={`${entry.color} marker`}
+                      style={{ width: '15px', height: '25px' }}
+                    />
+                  </td>
+                  <td style={thTdStyle}>
+                    <span
+                      style={deviceIdStyle(entry.deviceId, entry.allInvalid)}
+                      onClick={() => handleDeviceIdClick(entry.deviceId, entry.allInvalid)}
+                    >
+                      {entry.customName || entry.deviceId}
+                    </span>
+                  </td>
+                  <td style={thTdStyle}>{entry.containerId}</td>
+                  <td style={thTdStyle}>{entry.driver}</td>
+                  <td style={thTdStyle}>{format(new Date(entry.lastTime), 'yyyy/MM/dd HH:mm:ss')}</td>
+                  <td style={thTdStyle}>
+                    <button onClick={() => toggleRow(entry.deviceId)}>
+                      {expandedRows[entry.deviceId] ? '-' : '+'}
+                    </button>
+                  </td>
+                </tr>
+                {expandedRows[entry.deviceId] && (
+                  <tr key={`${entry.deviceId}-expanded`}>
+                    <td colSpan="7" style={expandedRowStyle}>
+                      <div>
+                        <strong>Device ID:</strong> {entry.deviceId}<br />
+                        <strong>Latitude:</strong> {entry.lat.toFixed(4)}<br />
+                        <strong>Longitude:</strong> {entry.lon.toFixed(4)}<br />
+                        <strong>Temperature:</strong> {entry.temp}°C<br />
+                        <strong>Core Voltage:</strong> {entry.corev}V<br />
+                        <strong>Li-ion Voltage:</strong> {entry.liionv}V<br />
+                        <strong>Geofence:</strong> {entry.inGeofence ? 'Yes' : 'No'}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
